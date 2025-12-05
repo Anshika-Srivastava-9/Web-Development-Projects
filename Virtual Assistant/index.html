@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sifra - Virtual Assistant</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons for nice visual elements -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* CSS adapted from the video tutorial's style and structure */
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background-color: #0d1117; /* Deep charcoal/GitHub dark theme */
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 30px;
+        }
+        
+        .assistant-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .gradient-text {
+            background-image: linear-gradient(45deg, #1c7ed6, #7950f2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Pulsing effect for the microphone when listening */
+        @keyframes pulse-mic {
+            0% { box-shadow: 0 0 0 0 rgba(28, 126, 214, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(28, 126, 214, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(28, 126, 214, 0); }
+        }
+
+        .mic-button-listening {
+            animation: pulse-mic 1.5s infinite;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="assistant-container p-6">
+        
+        <!-- Assistant Logo/Avatar -->
+        <div id="avatar" class="w-48 h-48 mb-8 rounded-full bg-gray-700/50 flex items-center justify-center p-4">
+            <!-- Using a simple icon as an avatar -->
+            <svg id="sifra-icon" class="w-full h-full text-[#1c7ed6] p-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 3.102c.026.042.067.09.112.14.398.448.948.81 1.554 1.056C12.434 4.5 13.528 4.5 14.28 4.298c.606-.246 1.156-.608 1.554-1.056.045-.05.086-.098.112-.14.212-.338.337-.732.337-1.148 0-.416-.125-.81-.337-1.148A3.765 3.765 0 0013.8 0c-.752 0-1.846.002-2.598.204-.606.246-1.156.608-1.554 1.056-.045.05-.086.098-.112.14-.212.338-.337.732.337-1.148 0 .416.125.81.337 1.148zM12 21a9 9 0 100-18 9 9 0 000 18z" clip-rule="evenodd"></path>
+            </svg>
+        </div>
+
+        <!-- Assistant Name and Title -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl sm:text-6xl font-extrabold text-white">
+                I AM <span class="gradient-text tracking-wider">SIFRA</span>
+            </h1>
+            <p id="va-status" class="text-lg sm:text-xl text-gray-400 mt-2 tracking-wide">
+                Your Virtual Assistant
+            </p>
+        </div>
+
+        <!-- Microphone Button / Listening Indicator -->
+        <button id="mic-button" class="w-60 p-4 rounded-full transition duration-300 ease-in-out bg-[#1c7ed6] hover:bg-[#7950f2] shadow-lg" onclick="startRecognition()">
+            <div id="button-content" class="flex items-center justify-center space-x-3">
+                <span class="text-white text-xl font-bold uppercase tracking-wider" id="mic-text">Click to Talk</span>
+                <i data-lucide="mic" class="w-6 h-6 text-white"></i>
+            </div>
+        </button>
+
+        <p id="mic-permission-status" class="text-sm text-yellow-300 mt-4">Microphone permission: unknown</p>
+
+        <!-- Dynamic Output/Text Display (where the user's speech appears) -->
+        <div class="mt-8 w-full max-w-lg p-4 bg-gray-800/70 border border-gray-700 rounded-xl shadow-inner">
+            <p id="user-transcript" class="text-gray-300 text-sm italic min-h-6">
+                Waiting for command...
+            </p>
+        </div>
+
+    </div>
+
+    <script>
+        // Global variables for Firebase access (required by the platform, even if not used)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Elements
+        const micButton = document.getElementById('mic-button');
+        const micText = document.getElementById('mic-text');
+        const userTranscript = document.getElementById('user-transcript');
+        const vaStatus = document.getElementById('va-status');
+        const sifraIcon = document.getElementById('sifra-icon'); 
+
+        // Removed recognitionRestartAttempts and MAX_RESTART_ATTEMPTS to stop frustrating retries
+
+        // --- LANGUAGE MANAGEMENT ---
+        let currentLang = 'en-US'; // Default to English
+        const langMap = {
+            'english': 'en-US',
+            'hindi': 'hi-IN',
+            'spanish': 'es-ES'
+        };
+        const langConfirmations = {
+            'en-US': "Language successfully changed to English.",
+            'hi-IN': "Bhasha safaltapoorvak Hindi mein badal di gayi hai.", 
+            'es-ES': "Idioma cambiado a español con éxito."
+        };
+        
+        // --- SPEECH SYNTHESIS (TTS) ---
+        
+        /**
+         * Converts text to speech.
+         * @param {string} text The text Sifra should speak.
+         */
+        function speak(text) {
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                
+                utterance.lang = currentLang;
+                utterance.rate = 1; 
+                utterance.pitch = 1.2; 
+                utterance.volume = 1;
+
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(utterance);
+
+                // Visual feedback when speaking
+                utterance.onstart = () => {
+                    vaStatus.innerText = "Sifra is speaking...";
+                    sifraIcon.style.color = '#ff337e'; 
+                };
+                utterance.onend = () => {
+                    vaStatus.innerText = "Your Virtual Assistant";
+                    sifraIcon.style.color = '#1c7ed6'; // Revert color
+                };
+            } else {
+                console.error("Text-to-speech not supported in this browser.");
+            }
+        }
+
+        // --- SPEECH RECOGNITION (STT) ---
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+        
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false; 
+            // Use the current language setting (e.g. 'en-US', 'hi-IN')
+            recognition.lang = currentLang;
+            recognition.interimResults = false; 
+            recognition.maxAlternatives = 1;
+            
+            // Event Handlers
+            recognition.onstart = () => {
+                micButton.classList.add('mic-button-listening', 'bg-red-600', 'hover:bg-red-700');
+                micButton.classList.remove('bg-[#1c7ed6]', 'hover:bg-[#7950f2]');
+                micText.innerText = "Listening...";
+                userTranscript.innerText = "Listening...";
+                vaStatus.innerText = "Listening for command...";
+                sifraIcon.style.color = 'yellow'; // Visual cue when listening starts
+            };
+
+            recognition.onend = () => {
+                micButton.classList.remove('mic-button-listening', 'bg-red-600', 'hover:bg-red-700');
+                micButton.classList.add('bg-[#1c7ed6]', 'hover:bg-[#7950f2]');
+                micText.innerText = "Click to Talk";
+                // Only reset status if not actively speaking the response
+                if (window.speechSynthesis.speaking === false) {
+                    vaStatus.innerText = "Your Virtual Assistant";
+                    sifraIcon.style.color = '#1c7ed6'; 
+                }
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                
+                // --- FIX: NO MORE AUTOMATIC RESTARTS ---
+                
+                let errorKey = 'unknownError';
+                if (event.error === 'not-allowed') {
+                    errorKey = 'permissionDeniedError';
+                } else if (event.error === 'no-speech') {
+                    errorKey = 'noSpeechError'; // Use final error message
+                }
+
+                userTranscript.innerText = `Error: ${getLocalizedText(errorKey)}. Please click 'Click to Talk' and try again.`;
+                speak(getLocalizedText(errorKey)); 
+                
+                // Reset UI state to allow user to manually retry
+                micButton.classList.remove('mic-button-listening', 'bg-red-600', 'hover:bg-red-700');
+                micButton.classList.add('bg-[#1c7ed6]', 'hover:bg-[#7950f2]');
+                micText.innerText = "Click to Talk";
+                sifraIcon.style.color = '#1c7ed6';
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                userTranscript.innerText = `You said: "${transcript}"`;
+                vaStatus.innerText = "Processing command..."; 
+                // No need to reset restart attempts here, as they are gone.
+                takeCommand(transcript);
+            };
+        } else {
+            document.addEventListener('DOMContentLoaded', () => {
+                micButton.disabled = true;
+                micText.innerText = "STT Not Supported";
+                userTranscript.innerText = "Error: Speech Recognition API is not available in your browser. Use Chrome/Edge and run this page over HTTPS or localhost.";
+            });
+        }
+
+        /**
+         * Starts the speech recognition process.
+         */
+        function startRecognition() {
+            if (!window.isSecureContext) {
+                // SpeechRecognition requires a secure context (HTTPS) in most browsers.
+                userTranscript.innerText = "Microphone access requires HTTPS or localhost. Serve this page via Live Server or a local web server.";
+                speak("Please open this page over HTTPS or run it on localhost to enable the microphone.");
+                return;
+            }
+
+            if (recognition) {
+                console.log("Attempting to start recognition. Checking microphone permission first.");
+                ensureMicrophonePermission()
+                    .then(() => {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.warn("Recognition already started or error occurred on start.", e);
+                            try {
+                                recognition.stop();
+                            } catch (_) {}
+                            recognition.start();
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Microphone permission error:', err);
+                        userTranscript.innerText = "Microphone permission denied or not available. Please allow access and try again.";
+                        speak(getLocalizedText('permissionDeniedError'));
+                        // Update the visible permission status to help debugging
+                        try { updateMicPermissionStatus(); } catch (_) {}
+                    });
+            }3
+        }
+
+        /**
+         * Ensures microphone permission by requesting a short getUserMedia stream.
+         * This helps trigger the browser permission prompt so SpeechRecognition can start.
+         * Returns a Promise that resolves when permission is granted (and immediately stops the tracks).
+         */
+        function ensureMicrophonePermission() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                return Promise.reject(new Error('getUserMedia not supported'));
+            }
+
+            return navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    // Stop all tracks immediately; we only wanted to prompt for permission.
+                    stream.getTracks().forEach(t => t.stop());
+                    try { updateMicPermissionStatus(); } catch (_) {}
+                });
+        }
+
+        // Update the on-page mic permission status using the Permissions API when available
+        function updateMicPermissionStatus() {
+            const el = document.getElementById('mic-permission-status');
+            if (!el) return;
+
+            if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'microphone' })
+                    .then(status => {
+                        el.innerText = `Microphone permission: ${status.state}`;
+                        el.className = 'text-sm mt-4 ' + (status.state === 'granted' ? 'text-green-400' : status.state === 'denied' ? 'text-red-400' : 'text-yellow-300');
+                        status.onchange = () => {
+                            el.innerText = `Microphone permission: ${status.state}`;
+                            el.className = 'text-sm mt-4 ' + (status.state === 'granted' ? 'text-green-400' : status.state === 'denied' ? 'text-red-400' : 'text-yellow-300');
+                        };
+                    })
+                    .catch(() => {
+                        el.innerText = 'Microphone permission: unavailable (Permissions API not supported)';
+                        el.className = 'text-sm mt-4 text-yellow-300';
+                    });
+            } else {
+                el.innerText = 'Microphone permission: unavailable (Permissions API not supported)';
+                el.className = 'text-sm mt-4 text-yellow-300';
+            }
+        }
+
+        // --- COMMAND PROCESSING ---
+
+        /**
+         * Removes the assistant's name (Sifra, Sipra, etc.) from the user's message 
+         * and converts it to lower case for reliable command matching.
+         * @param {string} message The raw transcript from the user.
+         * @returns {string} The cleaned, lower-cased command.
+         */
+        function cleanCommand(message) {
+            let cleaned = message.toLowerCase();
+            cleaned = cleaned.replace(/sifra/g, '');
+            cleaned = cleaned.replace(/sipra/g, '');
+            cleaned = cleaned.replace(/si fra/g, '');
+            cleaned = cleaned.replace(/siri/g, ''); 
+            return cleaned.trim();
+        }
+
+        /**
+         * Processes the user's voice command.
+         * @param {string} transcript The full raw transcript.
+         */
+        function takeCommand(transcript) {
+            const command = cleanCommand(transcript);
+
+            // --- 0. LANGUAGE CHANGE COMMAND ---
+            let langChangeMatch = false;
+            for (const langKey in langMap) {
+                if (command.includes(`speak in ${langKey}`) || command.includes(`change language to ${langKey}`)) {
+                    const newLangCode = langMap[langKey];
+                    currentLang = newLangCode;
+                    // If recognition is active, update its language immediately so next recognition uses newLang
+                    if (recognition) recognition.lang = currentLang;
+                    speak(langConfirmations[newLangCode]);
+                    langChangeMatch = true;
+                    break;
+                }
+            }
+
+            if (langChangeMatch) return; // Command processed, stop here.
+
+            // --- 1. CORE COMMANDS ---
+
+            // 1. Greetings
+            if (command.includes('hello') || command.includes('hi')) {
+                speak(getLocalizedText('greeting'));
+            } 
+            
+            // 2. Identity
+            else if (command.includes('who are you') || command.includes('what is your name')) {
+                speak(getLocalizedText('identity'));
+            } 
+            
+            // 3. Time
+            else if (command.includes('time')) {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString(currentLang, { hour: 'numeric', minute: '2-digit', hour12: true });
+                speak(getLocalizedText('time', timeString));
+            } 
+            
+            // 4. Date
+            else if (command.includes('date') || command.includes('today is')) {
+                const now = new Date();
+                const dateString = now.toLocaleDateString(currentLang, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                speak(getLocalizedText('date', dateString));
+            }
+            
+            // 5. Open Applications/Websites
+            else if (command.includes('open youtube')) {
+                speak(getLocalizedText('open', 'YouTube'));
+                window.open('https://www.youtube.com/', '_blank');
+            } else if (command.includes('open facebook')) {
+                speak(getLocalizedText('open', 'Facebook'));
+                window.open('https://www.facebook.com/', '_blank');
+            } else if (command.includes('open instagram')) {
+                speak(getLocalizedText('open', 'Instagram'));
+                window.open('https://www.instagram.com/', '_blank');
+            } else if (command.includes('open calculator')) {
+                speak(getLocalizedText('open', 'Calculator'));
+                window.open('calculator://', '_blank'); 
+            }
+            
+            // 6. Google Search / Q&A (Fallback)
+            else if (command.length > 2) {
+                speak(getLocalizedText('search', command));
+                const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(command)}`;
+                window.open(searchUrl, '_blank');
+            } else {
+                speak(getLocalizedText('unclear'));
+            }
+        }
+
+        // --- LOCALIZATION HELPER ---
+        
+        /**
+         * Provides localized text based on the current language setting.
+         */
+        function getLocalizedText(key, param = '') {
+            const responses = {
+                'en-US': {
+                    'greeting': "Hello sir, what can I help you with today?",
+                    'identity': "I am Sifra, your dedicated virtual assistant, created using JavaScript and the Web Speech API.",
+                    'time': `The current time is ${param}.`,
+                    'date': `Today's date is ${param}.`,
+                    'open': `Opening ${param} now.`,
+                    'search': `Searching the internet for ${param}.`,
+                    'unclear': "I didn't catch that clearly. Could you repeat the command?",
+                    'noSpeechError': "I still couldn't hear you. Please try speaking immediately after clicking the button.",
+                    'permissionDeniedError': "Microphone access was denied. Please grant permission to continue.",
+                    'unknownError': "Sorry, there was an unknown microphone error. Please try again.",
+                    'retryAttempt': `Microphone timed out. Retrying, attempt ${param} of 3. Please speak now.`
+                },
+                'hi-IN': {
+                    'greeting': "Namaste, sir. Main aapki kya madad kar sakti hoon?",
+                    'identity': "Main Sifra hoon, aapki digital sahayak, jise JavaScript ka upyog karke banaya gaya hai.",
+                    'time': `Samay hua hai, ${param}.`,
+                    'date': `Aaj ki tareekh hai ${param}.`,
+                    'open': `${param} khul raha hai.`,
+                    'search': `${param} ke baare mein yeh jankari mili hai internet par.`,
+                    'unclear': "Kripya ek spasht aadesh dein.",
+                    'noSpeechError': "Mujhe abhi bhi sunaayi nahi diya. Kripya button dabakar turant bolna shuru karein.",
+                    'permissionDeniedError': "Microphone ki anumati nahi mili. Kripya anumati dein.",
+                    'unknownError': "Kshama karein, ek anjaan microphone truti hai. Kripya phir se koshish karein.",
+                    'retryAttempt': `Microphone ka samay samapt ho gaya. Koshish ${param} phir se, kripya ab bolen.`
+                },
+                'es-ES': {
+                    'greeting': "¿Hola señor, en qué puedo ayudarle hoy?",
+                    'identity': "Soy Sifra, su asistente virtual dedicada, creada con JavaScript y la API de voz web.",
+                    'time': `La hora actual es ${param}.`,
+                    'date': `La fecha de hoy es ${param}.`,
+                    'open': `Abriendo ${param} ahora.`,
+                    'search': `Buscando en internet sobre ${param}.`,
+                    'unclear': "No lo entendí claramente. ¿Podría repetir la orden?",
+                    'noSpeechError': "Aún no pude escucharte. Por favor, haz clic e inmediatamente comienza a hablar.",
+                    'permissionDeniedError': "El acceso al micrófono fue denegado. Por favor, conceda permiso para continuar.",
+                    'unknownError': "Lo siento, hubo un error de micrófono desconocido. Por favor, inténtelo de nuevo.",
+                    'retryAttempt': `El micrófono expiró. Reintentando, intento ${param} de 3. Por favor, hable ahora.`
+                }
+            };
+            
+            // Fallback to English if the translation is missing for the current language
+            const currentResponses = responses[currentLang] || responses['en-US'];
+            return currentResponses[key] || responses['en-US'][key] || "I am unable to process this request.";
+        }
+
+        // --- INITIALIZATION ---
+
+        /**
+         * Initial greeting when the page loads.
+         */
+        function initialWishMe() {
+            const now = new Date();
+            const hour = now.getHours();
+            let greeting = "Hello Sir. ";
+
+            if (hour >= 4 && hour < 12) {
+                greeting += "Good morning, Sir. I am Sifra, ready to assist you.";
+            } else if (hour >= 12 && hour < 17) {
+                greeting += "Good afternoon, Sir. I am Sifra, ready to assist you.";
+            } else {
+                greeting += "Good evening, Sir. I am Sifra, ready to assist you.";
+            }
+            // Speak in the default language (English)
+            speak(greeting);
+        }
+
+        // Initialize Lucide icons and run the greeting when the document is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            if (typeof lucide !== 'undefined' && lucide.createIcons) {
+                 lucide.createIcons(); 
+            }
+            initialWishMe();
+        });
+        
+    </script>
+</body>
+</html>
