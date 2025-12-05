@@ -451,14 +451,14 @@
         function initialWishMe() {
             const now = new Date();
             const hour = now.getHours();
-            let greeting = "Hello Sir. ";
+            let greeting = "Hello Preeti Ma'am. ";
 
             if (hour >= 4 && hour < 12) {
-                greeting += "Good morning, Sir. I am Sifra, ready to assist you.";
+                greeting += "Good morning, Ma'am. I am Sifra, ready to assist you.";
             } else if (hour >= 12 && hour < 17) {
-                greeting += "Good afternoon, Sir. I am Sifra, ready to assist you.";
+                greeting += "Good afternoon, Ma'am. I am Sifra, ready to assist you.";
             } else {
-                greeting += "Good evening, Sir. I am Sifra, ready to assist you.";
+                greeting += "Good evening, Ma'am. I am Sifra, ready to assist you.";
             }
             // Speak in the default language (English)
             speak(greeting);
